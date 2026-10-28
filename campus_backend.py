@@ -1,48 +1,36 @@
-import mysql.connector
+import mysql.connector as mysqlcon
 from mysql.connector import Error
 
-# ==========================================
-# 1. DATABASE CONFIGURATION
-# ==========================================
-DB_CONFIG = {
+dbms_config = {
     "host": "localhost",
     "user": "root",
-    "password": "your_mysql_password",  # <-- Replace with your MySQL root password
+    "password": "root",
     "database": "campus_placement_db"
 }
 
 
-def get_connection(include_db=True):
-    """Creates and returns a MySQL database connection."""
-    config = DB_CONFIG.copy()
+def get_connection(include_db=True): # mysql connection
+    config = dbms_config.copy()
     if not include_db:
         config.pop("database", None)
-    return mysql.connector.connect(**config)
+    return mysqlcon.connect(**config)
 
-
-# ==========================================
-# 2. DATABASE, TABLE & PL/SQL INITIALIZATION
-# ==========================================
 def init_db():
-    """
-    Initializes the database, 3NF tables, Trigger, and Cursor-based Stored Procedure.
-    Safe to run multiple times even if your DBMS teammate already created the tables.
-    """
+
     conn = None
     cursor = None
     try:
-        # Step 1: Create Database if it doesn't exist
+        # to create database if it doesn't exist, so we avoid no database found errors
         conn = get_connection(include_db=False)
         cursor = conn.cursor()
-        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {DB_CONFIG['database']}")
+        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {dbms_config['database']}")
         cursor.close()
         conn.close()
 
-        # Step 2: Connect to the target database and create tables
+        # dbms connection
         conn = get_connection(include_db=True)
         cursor = conn.cursor()
 
-        # Student Table: Student_ID (PK), Name, Branch, CGPA, Status
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS Student (
                 Student_ID INT PRIMARY KEY,
@@ -53,7 +41,6 @@ def init_db():
             )
         """)
 
-        # Company Table: Company_ID (PK), Name, Role, Package
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS Company (
                 Company_ID INT PRIMARY KEY,
@@ -63,7 +50,6 @@ def init_db():
             )
         """)
 
-        # Application Table: App_ID (PK), Student_ID (FK), Company_ID (FK)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS Application (
                 App_ID INT AUTO_INCREMENT PRIMARY KEY,
@@ -77,9 +63,8 @@ def init_db():
             )
         """)
 
-        # Step 3: PL/SQL Concept 1 - TRIGGER
-        # Automatically sets Status to 'Applied' if an Unplaced student submits an application
-        cursor.execute("DROP TRIGGER IF EXISTS trg_after_application_insert")
+        # application submit trigger
+        cursor.execute("DROP TRIGGER IF EXISTS trg_after_application_insert") # don't remove, without this running code twice gives error since trigger already exists and we create again in next line
         cursor.execute("""
             CREATE TRIGGER trg_after_application_insert
             AFTER INSERT ON Application
@@ -91,9 +76,8 @@ def init_db():
             END
         """)
 
-        # Step 4: PL/SQL Concept 2 - STORED PROCEDURE WITH CURSOR
-        # Uses a CURSOR to iterate through all students and calculate placement statistics
-        cursor.execute("DROP PROCEDURE IF EXISTS sp_get_placement_summary")
+        # calculate placement stats using cursor
+        cursor.execute("DROP PROCEDURE IF EXISTS sp_get_placement_summary") # don't remove, same issue as trigger here
         cursor.execute("""
             CREATE PROCEDURE sp_get_placement_summary()
             BEGIN
@@ -149,11 +133,8 @@ def init_db():
             conn.close()
 
 
-# ==========================================
-# 3. STUDENT DML OPERATIONS (CRUD)
-# ==========================================
 def add_student(student_id: int, name: str, branch: str, cgpa: float, status: str = "Unplaced"):
-    """INSERT a new student record."""
+    
     conn = None
     cursor = None
     try:
@@ -176,7 +157,6 @@ def add_student(student_id: int, name: str, branch: str, cgpa: float, status: st
 
 
 def get_all_students():
-    """SELECT all students."""
     conn = None
     cursor = None
     try:
@@ -195,7 +175,6 @@ def get_all_students():
 
 
 def get_student_by_id(student_id: int):
-    """SELECT a single student by ID."""
     conn = None
     cursor = None
     try:
@@ -219,7 +198,6 @@ def get_student_by_id(student_id: int):
 
 
 def update_student(student_id: int, name: str = None, branch: str = None, cgpa: float = None, status: str = None):
-    """UPDATE student details or placement status dynamically."""
     conn = None
     cursor = None
     try:
@@ -262,7 +240,6 @@ def update_student(student_id: int, name: str = None, branch: str = None, cgpa: 
 
 
 def delete_student(student_id: int):
-    """DELETE a student by ID (automatically cascades to Application)."""
     conn = None
     cursor = None
     try:
@@ -282,11 +259,7 @@ def delete_student(student_id: int):
             conn.close()
 
 
-# ==========================================
-# 4. COMPANY DML OPERATIONS (CRUD)
-# ==========================================
 def add_company(company_id: int, name: str, role: str, package: float):
-    """INSERT a new company record."""
     conn = None
     cursor = None
     try:
@@ -309,7 +282,6 @@ def add_company(company_id: int, name: str, role: str, package: float):
 
 
 def get_all_companies():
-    """SELECT all companies."""
     conn = None
     cursor = None
     try:
@@ -328,7 +300,6 @@ def get_all_companies():
 
 
 def update_company(company_id: int, name: str = None, role: str = None, package: float = None):
-    """UPDATE company details dynamically."""
     conn = None
     cursor = None
     try:
@@ -368,7 +339,6 @@ def update_company(company_id: int, name: str = None, role: str = None, package:
 
 
 def delete_company(company_id: int):
-    """DELETE a company by ID (automatically cascades to Application)."""
     conn = None
     cursor = None
     try:
@@ -388,14 +358,7 @@ def delete_company(company_id: int):
             conn.close()
 
 
-# ==========================================
-# 5. APPLICATION & PLACEMENT OPERATIONS
-# ==========================================
 def create_application(student_id: int, company_id: int, app_id: int = None):
-    """
-    INSERT a student application for a company.
-    Fires 'trg_after_application_insert' in MySQL to update Student Status if 'Unplaced'.
-    """
     conn = None
     cursor = None
     try:
@@ -423,7 +386,6 @@ def create_application(student_id: int, company_id: int, app_id: int = None):
 
 
 def get_all_applications():
-    """SELECT all applications joined with Student and Company details."""
     conn = None
     cursor = None
     try:
@@ -459,7 +421,6 @@ def get_all_applications():
 
 
 def delete_application(app_id: int):
-    """DELETE an application by App_ID."""
     conn = None
     cursor = None
     try:
@@ -480,10 +441,6 @@ def delete_application(app_id: int):
 
 
 def get_placement_analytics():
-    """
-    Calls the PL/SQL Stored Procedure 'sp_get_placement_summary' (which uses a CURSOR)
-    to return overall placement statistics.
-    """
     conn = None
     cursor = None
     try:
@@ -508,24 +465,6 @@ def get_placement_analytics():
             conn.close()
 
 
-# ==========================================
-# 6. QUICK SELF-TEST (RUN DIRECTLY IN TERMINAL)
-# ==========================================
 if __name__ == "__main__":
     print("1. Initializing Database & PL/SQL Objects...")
     print(init_db())
-
-    print("\n2. Inserting Sample Data...")
-    print(add_student(101, "Aarav Sharma", "CSE", 8.75, "Unplaced"))
-    print(add_student(102, "Priya Nair", "IT", 9.10, "Placed"))
-    print(add_company(201, "TechCorp", "Software Engineer", 12.50))
-    print(add_company(202, "DataSystems", "Data Analyst", 9.00))
-
-    print("\n3. Submitting Application (Fires Trigger)...")
-    print(create_application(student_id=101, company_id=201))
-
-    print("\n4. Fetching Applications (Joined View)...")
-    print(get_all_applications())
-
-    print("\n5. Running Stored Procedure with Cursor for Result Calculation...")
-    print(get_placement_analytics())
