@@ -1,172 +1,162 @@
-import mysql.connector as mysqlcon
+"""
+Campus Placement Management System - Flask REST API
+Uses the existing CampusPlacementDB database and its eight tables.
+This application does NOT create, drop, or modify the database schema.
+
+Install:
+    python -m pip install flask flask-cors mysql-connector-python
+
+Before running:
+    1. Set MYSQL_CONFIG["password"] to your MySQL root password.
+    2. Ensure CampusPlacementDB and all eight tables already exist.
+    3. Run: python campus_backend.py
+    4. API base URL: http://127.0.0.1:5000/api
+"""
+
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+import mysql.connector
 from mysql.connector import Error
 
-dbms_config = {
+app = Flask(__name__)
+CORS(app)  # Allows a separate frontend (for example React/Vite) to call this API.
+
+MYSQL_CONFIG = {
     "host": "localhost",
     "user": "root",
-    "password": "root",
-    "database": "campus_placement_db"
+    "password": "hehe",  # Replace with your actual MySQL password
+    "database": "CampusPlacementDB",
+    "port": 3306,
+}
+
+# Only these tables and columns can be accessed through the generic CRUD routes.
+# The primary key for each table is listed separately.
+TABLES = {
+    "departments": {
+        "sql": "Departments",
+        "pk": "department_id",
+        "columns": [
+            "department_id", "department_name", "department_code"
+        ],
+        "required": ["department_name", "department_code"],
+        "auto_pk": True,
+    },
+    "students": {
+        "sql": "Students",
+        "pk": "student_id",
+        "columns": [
+            "student_id", "full_name", "email", "phone", "department_id",
+            "cgpa", "graduation_year", "placement_status"
+        ],
+        "required": [
+            "full_name", "email", "department_id", "cgpa", "graduation_year"
+        ],
+        "auto_pk": True,
+    },
+    "companies": {
+        "sql": "Companies",
+        "pk": "company_id",
+        "columns": ["company_id", "company_name", "industry", "contact_email"],
+        "required": ["company_name", "industry", "contact_email"],
+        "auto_pk": True,
+    },
+    "placement_drives": {
+        "sql": "Placement_Drives",
+        "pk": "drive_id",
+        "columns": [
+            "drive_id", "company_id", "drive_date", "academic_year",
+            "venue", "drive_status"
+        ],
+        "required": ["company_id", "drive_date", "academic_year"],
+        "auto_pk": True,
+    },
+    "job_postings": {
+        "sql": "Job_Postings",
+        "pk": "job_id",
+        "columns": [
+            "job_id", "company_id", "drive_id", "job_role", "package_lpa",
+            "min_cgpa", "job_location", "application_deadline"
+        ],
+        "required": [
+            "company_id", "job_role", "package_lpa", "min_cgpa",
+            "application_deadline"
+        ],
+        "auto_pk": True,
+    },
+    "applications": {
+        "sql": "Applications",
+        "pk": "application_id",
+        "columns": [
+            "application_id", "student_id", "job_id", "application_date",
+            "application_status"
+        ],
+        "required": ["student_id", "job_id"],
+        "auto_pk": True,
+    },
+    "interview_rounds": {
+        "sql": "Interview_Rounds",
+        "pk": "interview_id",
+        "columns": [
+            "interview_id", "application_id", "round_name", "interview_date",
+            "interview_mode", "result", "feedback"
+        ],
+        "required": ["application_id", "round_name"],
+        "auto_pk": True,
+    },
+    "offers": {
+        "sql": "Offers",
+        "pk": "offer_id",
+        "columns": [
+            "offer_id", "application_id", "offer_date",
+            "offered_package_lpa", "offer_status", "joining_date"
+        ],
+        "required": ["application_id", "offered_package_lpa"],
+        "auto_pk": True,
+    },
 }
 
 
-def get_connection(include_db=True): # mysql connection
-    config = dbms_config.copy()
-    if not include_db:
-        config.pop("database", None)
-    return mysqlcon.connect(**config)
-
-def init_db():
-
-    conn = None
-    cursor = None
-    try:
-        # to create database if it doesn't exist, so we avoid no database found errors
-        conn = get_connection(include_db=False)
-        cursor = conn.cursor()
-        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {dbms_config['database']}")
-        cursor.close()
-        conn.close()
-
-        # dbms connection
-        conn = get_connection(include_db=True)
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS Student (
-                Student_ID INT PRIMARY KEY,
-                Name VARCHAR(100) NOT NULL,
-                Branch VARCHAR(50) NOT NULL,
-                CGPA DECIMAL(4, 2) NOT NULL CHECK (CGPA >= 0.0 AND CGPA <= 10.0),
-                Status VARCHAR(30) DEFAULT 'Unplaced'
-            )
-        """)
-
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS Company (
-                Company_ID INT PRIMARY KEY,
-                Name VARCHAR(100) NOT NULL,
-                Role VARCHAR(100) NOT NULL,
-                Package DECIMAL(10, 2) NOT NULL CHECK (Package >= 0.0)
-            )
-        """)
-
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS Application (
-                App_ID INT AUTO_INCREMENT PRIMARY KEY,
-                Student_ID INT NOT NULL,
-                Company_ID INT NOT NULL,
-                UNIQUE KEY unique_application (Student_ID, Company_ID),
-                CONSTRAINT fk_student FOREIGN KEY (Student_ID) 
-                    REFERENCES Student(Student_ID) ON DELETE CASCADE,
-                CONSTRAINT fk_company FOREIGN KEY (Company_ID) 
-                    REFERENCES Company(Company_ID) ON DELETE CASCADE
-            )
-        """)
-
-        # application submit trigger
-        cursor.execute("DROP TRIGGER IF EXISTS trg_after_application_insert") # don't remove, without this running code twice gives error since trigger already exists and we create again in next line
-        cursor.execute("""
-            CREATE TRIGGER trg_after_application_insert
-            AFTER INSERT ON Application
-            FOR EACH ROW
-            BEGIN
-                UPDATE Student
-                SET Status = 'Applied'
-                WHERE Student_ID = NEW.Student_ID AND Status = 'Unplaced';
-            END
-        """)
-
-        # calculate placement stats using cursor
-        cursor.execute("DROP PROCEDURE IF EXISTS sp_get_placement_summary") # don't remove, same issue as trigger here
-        cursor.execute("""
-            CREATE PROCEDURE sp_get_placement_summary()
-            BEGIN
-                DECLARE done INT DEFAULT FALSE;
-                DECLARE v_status VARCHAR(30);
-                DECLARE v_cgpa DECIMAL(4,2);
-                
-                DECLARE total_students INT DEFAULT 0;
-                DECLARE placed_students INT DEFAULT 0;
-                DECLARE cgpa_sum DECIMAL(10,2) DEFAULT 0.00;
-
-                -- Declare Cursor
-                DECLARE student_cursor CURSOR FOR 
-                    SELECT Status, CGPA FROM Student;
-                DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
-
-                OPEN student_cursor;
-
-                read_loop: LOOP
-                    FETCH student_cursor INTO v_status, v_cgpa;
-                    IF done THEN
-                        LEAVE read_loop;
-                    END IF;
-
-                    SET total_students = total_students + 1;
-                    SET cgpa_sum = cgpa_sum + v_cgpa;
-
-                    IF v_status = 'Placed' THEN
-                        SET placed_students = placed_students + 1;
-                    END IF;
-                END LOOP;
-
-                CLOSE student_cursor;
-
-                SELECT 
-                    total_students AS Total_Students,
-                    placed_students AS Placed_Students,
-                    (total_students - placed_students) AS Unplaced_Or_Pending,
-                    IF(total_students > 0, ROUND((placed_students / total_students) * 100, 2), 0) AS Placement_Percentage,
-                    IF(total_students > 0, ROUND(cgpa_sum / total_students, 2), 0) AS Average_CGPA;
-            END
-        """)
-
-        conn.commit()
-        return {"success": True, "message": "Database, tables, trigger, and procedure initialized successfully."}
-
-    except Error as e:
-        return {"success": False, "error": str(e)}
-    finally:
-        if cursor:
-            cursor.close()
-        if conn and conn.is_connected():
-            conn.close()
+def get_connection():
+    """Connect to the existing database."""
+    return mysql.connector.connect(**MYSQL_CONFIG)
 
 
-def add_student(student_id: int, name: str, branch: str, cgpa: float, status: str = "Unplaced"):
-    
-    conn = None
-    cursor = None
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        query = """
-            INSERT INTO Student (Student_ID, Name, Branch, CGPA, Status)
-            VALUES (%s, %s, %s, %s, %s)
-        """
-        cursor.execute(query, (student_id, name, branch, cgpa, status))
-        conn.commit()
-        return {"success": True, "message": f"Student {name} (ID: {student_id}) added successfully."}
-    except Error as e:
-        return {"success": False, "error": str(e)}
-    finally:
-        if cursor:
-            cursor.close()
-        if conn and conn.is_connected():
-            conn.close()
+def json_error(message, status=400):
+    return jsonify({"success": False, "error": str(message)}), status
 
 
-def get_all_students():
+def run_query(query, params=(), fetch=None, commit=False, callproc=None):
+    """Run a parameterized query and return JSON-friendly data."""
     conn = None
     cursor = None
     try:
         conn = get_connection()
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT Student_ID, Name, Branch, CAST(CGPA AS DOUBLE) AS CGPA, Status FROM Student ORDER BY Student_ID")
-        rows = cursor.fetchall()
-        return {"success": True, "data": rows}
-    except Error as e:
-        return {"success": False, "error": str(e)}
+        if callproc:
+            cursor.callproc(callproc[0], callproc[1])
+            rows = []
+            for result in cursor.stored_results():
+                rows.extend(result.fetchall())
+            return {"success": True, "data": rows}
+        cursor.execute(query, params)
+        if fetch == "one":
+            row = cursor.fetchone()
+            return {"success": True, "data": row}
+        if fetch == "all":
+            return {"success": True, "data": cursor.fetchall()}
+        if commit:
+            conn.commit()
+            return {
+                "success": True,
+                "message": "Operation completed successfully.",
+                "inserted_id": cursor.lastrowid,
+                "affected_rows": cursor.rowcount,
+            }
+        return {"success": True}
+    except Error as exc:
+        if conn and conn.is_connected():
+            conn.rollback()
+        return {"success": False, "error": str(exc)}
     finally:
         if cursor:
             cursor.close()
@@ -174,297 +164,174 @@ def get_all_students():
             conn.close()
 
 
-def get_student_by_id(student_id: int):
-    conn = None
-    cursor = None
-    try:
-        conn = get_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute(
-            "SELECT Student_ID, Name, Branch, CAST(CGPA AS DOUBLE) AS CGPA, Status FROM Student WHERE Student_ID = %s",
-            (student_id,)
+def table_config(table_name):
+    config = TABLES.get(table_name.lower())
+    if not config:
+        return None
+    return config
+
+
+@app.get("/")
+def home():
+    return jsonify({
+        "success": True,
+        "message": "Campus Placement Management API is running.",
+        "api_base": "/api",
+        "available_resources": list(TABLES.keys()),
+    })
+
+
+@app.get("/api/health")
+def health():
+    result = run_query("SELECT DATABASE() AS database_name", fetch="one")
+    if result["success"]:
+        result["message"] = "MySQL connection successful."
+        return jsonify(result)
+    return json_error(result.get("error", "Database connection failed."), 500)
+
+
+@app.route("/api/<table_name>", methods=["GET", "POST"])
+def collection_crud(table_name):
+    """GET list / POST create for any of the eight approved tables."""
+    cfg = table_config(table_name)
+    if not cfg:
+        return json_error("Unknown table/resource.", 404)
+
+    table = cfg["sql"]
+    pk = cfg["pk"]
+
+    if request.method == "GET":
+        result = run_query(f"SELECT * FROM `{table}` ORDER BY `{pk}` DESC", fetch="all")
+        return (jsonify(result), 200) if result["success"] else json_error(result["error"], 500)
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return json_error("Send a JSON object in the request body.")
+
+    unknown = set(data) - set(cfg["columns"])
+    if unknown:
+        return json_error("Unknown column(s): " + ", ".join(sorted(unknown)))
+
+    missing = [field for field in cfg["required"] if data.get(field) is None]
+    if missing:
+        return json_error("Required field(s) missing: " + ", ".join(missing))
+
+    if cfg["auto_pk"] and data.get(pk) is None:
+        data.pop(pk, None)
+
+    if not data:
+        return json_error("No fields supplied.")
+
+    columns = list(data.keys())
+    column_sql = ", ".join(f"`{column}`" for column in columns)
+    placeholders = ", ".join(["%s"] * len(columns))
+    query = f"INSERT INTO `{table}` ({column_sql}) VALUES ({placeholders})"
+    result = run_query(query, tuple(data[column] for column in columns), commit=True)
+
+    if not result["success"]:
+        return json_error(result["error"], 400)
+
+    result["id"] = result.pop("inserted_id", None)
+    return jsonify(result), 201
+
+
+@app.route("/api/<table_name>/<int:record_id>", methods=["GET", "PUT", "PATCH", "DELETE"])
+def record_crud(table_name, record_id):
+    """GET one / PUT or PATCH update / DELETE one record."""
+    cfg = table_config(table_name)
+    if not cfg:
+        return json_error("Unknown table/resource.", 404)
+
+    table = cfg["sql"]
+    pk = cfg["pk"]
+
+    if request.method == "GET":
+        result = run_query(
+            f"SELECT * FROM `{table}` WHERE `{pk}` = %s",
+            (record_id,), fetch="one"
         )
-        row = cursor.fetchone()
-        if not row:
-            return {"success": False, "error": f"Student ID {student_id} not found."}
-        return {"success": True, "data": row}
-    except Error as e:
-        return {"success": False, "error": str(e)}
-    finally:
-        if cursor:
-            cursor.close()
-        if conn and conn.is_connected():
-            conn.close()
+        if not result["success"]:
+            return json_error(result["error"], 500)
+        if result["data"] is None:
+            return json_error("Record not found.", 404)
+        return jsonify(result)
+
+    if request.method in ("PUT", "PATCH"):
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or not data:
+            return json_error("Send a non-empty JSON object.")
+
+        unknown = set(data) - set(cfg["columns"])
+        if unknown:
+            return json_error("Unknown column(s): " + ", ".join(sorted(unknown)))
+        # Primary keys are changed only by the database, not through updates.
+        data.pop(pk, None)
+        if not data:
+            return json_error("No editable fields supplied.")
+
+        set_sql = ", ".join(f"`{column}` = %s" for column in data)
+        params = tuple(data.values()) + (record_id,)
+        result = run_query(
+            f"UPDATE `{table}` SET {set_sql} WHERE `{pk}` = %s",
+            params, commit=True
+        )
+        if not result["success"]:
+            return json_error(result["error"], 400)
+        if result.get("affected_rows", 0) == 0:
+            # Distinguish no-op update from missing row.
+            check = run_query(
+                f"SELECT `{pk}` FROM `{table}` WHERE `{pk}` = %s",
+                (record_id,), fetch="one"
+            )
+            if check["success"] and check["data"] is None:
+                return json_error("Record not found.", 404)
+        return jsonify(result)
+
+    result = run_query(
+        f"DELETE FROM `{table}` WHERE `{pk}` = %s",
+        (record_id,), commit=True
+    )
+    if not result["success"]:
+        # Foreign-key restrictions may prevent deletion, by design.
+        return json_error(result["error"], 409)
+    if result.get("affected_rows", 0) == 0:
+        return json_error("Record not found.", 404)
+    return jsonify(result)
 
 
-def update_student(student_id: int, name: str = None, branch: str = None, cgpa: float = None, status: str = None):
-    conn = None
-    cursor = None
-    try:
-        fields = []
-        values = []
-        if name is not None:
-            fields.append("Name = %s")
-            values.append(name)
-        if branch is not None:
-            fields.append("Branch = %s")
-            values.append(branch)
-        if cgpa is not None:
-            fields.append("CGPA = %s")
-            values.append(cgpa)
-        if status is not None:
-            fields.append("Status = %s")
-            values.append(status)
-
-        if not fields:
-            return {"success": False, "error": "No fields provided to update."}
-
-        values.append(student_id)
-        query = f"UPDATE Student SET {', '.join(fields)} WHERE Student_ID = %s"
-
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(query, tuple(values))
-        conn.commit()
-
-        if cursor.rowcount == 0:
-            return {"success": False, "error": f"Student ID {student_id} not found or no changes made."}
-        return {"success": True, "message": f"Student ID {student_id} updated successfully."}
-    except Error as e:
-        return {"success": False, "error": str(e)}
-    finally:
-        if cursor:
-            cursor.close()
-        if conn and conn.is_connected():
-            conn.close()
+@app.get("/api/eligible-students/<int:job_id>")
+def eligible_students(job_id):
+    """Call the GetEligibleStudents stored procedure already in the database."""
+    result = run_query(
+        "", fetch=None,
+        callproc=("GetEligibleStudents", (job_id,))
+    )
+    return (jsonify(result), 200) if result["success"] else json_error(result["error"], 500)
 
 
-def delete_student(student_id: int):
-    conn = None
-    cursor = None
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM Student WHERE Student_ID = %s", (student_id,))
-        conn.commit()
-        if cursor.rowcount == 0:
-            return {"success": False, "error": f"Student ID {student_id} not found."}
-        return {"success": True, "message": f"Student ID {student_id} deleted successfully."}
-    except Error as e:
-        return {"success": False, "error": str(e)}
-    finally:
-        if cursor:
-            cursor.close()
-        if conn and conn.is_connected():
-            conn.close()
-
-
-def add_company(company_id: int, name: str, role: str, package: float):
-    conn = None
-    cursor = None
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        query = """
-            INSERT INTO Company (Company_ID, Name, Role, Package)
-            VALUES (%s, %s, %s, %s)
-        """
-        cursor.execute(query, (company_id, name, role, package))
-        conn.commit()
-        return {"success": True, "message": f"Company {name} (ID: {company_id}) added successfully."}
-    except Error as e:
-        return {"success": False, "error": str(e)}
-    finally:
-        if cursor:
-            cursor.close()
-        if conn and conn.is_connected():
-            conn.close()
-
-
-def get_all_companies():
-    conn = None
-    cursor = None
-    try:
-        conn = get_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT Company_ID, Name, Role, CAST(Package AS DOUBLE) AS Package FROM Company ORDER BY Company_ID")
-        rows = cursor.fetchall()
-        return {"success": True, "data": rows}
-    except Error as e:
-        return {"success": False, "error": str(e)}
-    finally:
-        if cursor:
-            cursor.close()
-        if conn and conn.is_connected():
-            conn.close()
-
-
-def update_company(company_id: int, name: str = None, role: str = None, package: float = None):
-    conn = None
-    cursor = None
-    try:
-        fields = []
-        values = []
-        if name is not None:
-            fields.append("Name = %s")
-            values.append(name)
-        if role is not None:
-            fields.append("Role = %s")
-            values.append(role)
-        if package is not None:
-            fields.append("Package = %s")
-            values.append(package)
-
-        if not fields:
-            return {"success": False, "error": "No fields provided to update."}
-
-        values.append(company_id)
-        query = f"UPDATE Company SET {', '.join(fields)} WHERE Company_ID = %s"
-
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(query, tuple(values))
-        conn.commit()
-
-        if cursor.rowcount == 0:
-            return {"success": False, "error": f"Company ID {company_id} not found or no changes made."}
-        return {"success": True, "message": f"Company ID {company_id} updated successfully."}
-    except Error as e:
-        return {"success": False, "error": str(e)}
-    finally:
-        if cursor:
-            cursor.close()
-        if conn and conn.is_connected():
-            conn.close()
-
-
-def delete_company(company_id: int):
-    conn = None
-    cursor = None
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM Company WHERE Company_ID = %s", (company_id,))
-        conn.commit()
-        if cursor.rowcount == 0:
-            return {"success": False, "error": f"Company ID {company_id} not found."}
-        return {"success": True, "message": f"Company ID {company_id} deleted successfully."}
-    except Error as e:
-        return {"success": False, "error": str(e)}
-    finally:
-        if cursor:
-            cursor.close()
-        if conn and conn.is_connected():
-            conn.close()
-
-
-def create_application(student_id: int, company_id: int, app_id: int = None):
-    conn = None
-    cursor = None
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        if app_id is not None:
-            query = "INSERT INTO Application (App_ID, Student_ID, Company_ID) VALUES (%s, %s, %s)"
-            cursor.execute(query, (app_id, student_id, company_id))
-        else:
-            query = "INSERT INTO Application (Student_ID, Company_ID) VALUES (%s, %s)"
-            cursor.execute(query, (student_id, company_id))
-        conn.commit()
-        return {
-            "success": True,
-            "app_id": cursor.lastrowid,
-            "message": f"Student {student_id} successfully applied to Company {company_id}."
-        }
-    except Error as e:
-        return {"success": False, "error": str(e)}
-    finally:
-        if cursor:
-            cursor.close()
-        if conn and conn.is_connected():
-            conn.close()
-
-
-def get_all_applications():
-    conn = None
-    cursor = None
-    try:
-        conn = get_connection()
-        cursor = conn.cursor(dictionary=True)
-        query = """
-            SELECT 
-                a.App_ID,
-                s.Student_ID,
-                s.Name AS Student_Name,
-                s.Branch,
-                CAST(s.CGPA AS DOUBLE) AS CGPA,
-                s.Status AS Student_Status,
-                c.Company_ID,
-                c.Name AS Company_Name,
-                c.Role,
-                CAST(c.Package AS DOUBLE) AS Package
-            FROM Application a
-            INNER JOIN Student s ON a.Student_ID = s.Student_ID
-            INNER JOIN Company c ON a.Company_ID = c.Company_ID
-            ORDER BY a.App_ID DESC
-        """
-        cursor.execute(query)
-        rows = cursor.fetchall()
-        return {"success": True, "data": rows}
-    except Error as e:
-        return {"success": False, "error": str(e)}
-    finally:
-        if cursor:
-            cursor.close()
-        if conn and conn.is_connected():
-            conn.close()
-
-
-def delete_application(app_id: int):
-    conn = None
-    cursor = None
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM Application WHERE App_ID = %s", (app_id,))
-        conn.commit()
-        if cursor.rowcount == 0:
-            return {"success": False, "error": f"Application ID {app_id} not found."}
-        return {"success": True, "message": f"Application ID {app_id} deleted successfully."}
-    except Error as e:
-        return {"success": False, "error": str(e)}
-    finally:
-        if cursor:
-            cursor.close()
-        if conn and conn.is_connected():
-            conn.close()
-
-
-def get_placement_analytics():
-    conn = None
-    cursor = None
-    try:
-        conn = get_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.callproc("sp_get_placement_summary")
-        stats = {}
-        for result in cursor.stored_results():
-            stats = result.fetchone()
-        # Convert Decimal objects if any to float for JSON compatibility
-        if stats:
-            for k, v in stats.items():
-                if v is not None and not isinstance(v, (int, float, str)):
-                    stats[k] = float(v)
-        return {"success": True, "data": stats}
-    except Error as e:
-        return {"success": False, "error": str(e)}
-    finally:
-        if cursor:
-            cursor.close()
-        if conn and conn.is_connected():
-            conn.close()
+@app.get("/api/analytics/placement")
+def placement_analytics():
+    """Dashboard summary using the existing eight-table schema."""
+    query = """
+        SELECT
+            (SELECT COUNT(*) FROM Students) AS total_students,
+            (SELECT COUNT(DISTINCT a.student_id)
+             FROM Applications a
+             JOIN Offers o ON o.application_id = a.application_id
+             WHERE o.offer_status = 'Accepted') AS placed_students,
+            (SELECT COUNT(*) FROM Companies) AS total_companies,
+            (SELECT COUNT(*) FROM Placement_Drives) AS total_drives,
+            (SELECT COUNT(*) FROM Job_Postings) AS total_jobs,
+            (SELECT COUNT(*) FROM Applications) AS total_applications,
+            (SELECT ROUND(AVG(cgpa), 2) FROM Students) AS average_cgpa
+    """
+    result = run_query(query, fetch="one")
+    return (jsonify(result), 200) if result["success"] else json_error(result["error"], 500)
 
 
 if __name__ == "__main__":
-    print("1. Initializing Database & PL/SQL Objects...")
-    print(init_db())
+    print("Starting Campus Placement Management API...")
+    print("Database:", MYSQL_CONFIG["database"])
+    print("API URL: http://127.0.0.1:5000")
+    print("Health check: http://127.0.0.1:5000/api/health")
+    app.run(host="127.0.0.1", port=5000, debug=True)
