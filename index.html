@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Campus Placement Management</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Sidebar Navigation -->
+    <nav class="sidebar">
+        <h2 style="padding: 20px 10px; font-size: 1.1rem;">Campus Placement Management</h2>
+        <ul id="nav-links">
+            <li><a href="#" data-target="dashboard" class="active">Dashboard</a></li>
+            <li><a href="#" data-target="departments">Departments</a></li>
+            <li><a href="#" data-target="students">Students</a></li>
+            <li><a href="#" data-target="companies">Companies</a></li>
+            <li><a href="#" data-target="placement_drives">Placement Drives</a></li>
+            <li><a href="#" data-target="job_postings">Job Postings</a></li>
+            <li><a href="#" data-target="applications">Applications</a></li>
+            <li><a href="#" data-target="interview_rounds">Interview Rounds</a></li>
+            <li><a href="#" data-target="offers">Offers</a></li>
+        </ul>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+        <header class="topbar">
+            <h1 id="page-title">Dashboard</h1>
+            <div class="topbar-actions" id="table-actions" style="display: none;">
+                <input type="text" id="search-input" placeholder="Search records...">
+                <button id="add-btn" class="primary-btn">+ Add Record</button>
+            </div>
+        </header>
+
+        <!-- Dashboard View -->
+        <section id="dashboard-view" class="view-section active">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <h3>Total Students</h3>
+                    <p id="stat-students">--</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Placed Students</h3>
+                    <p id="stat-placed">--</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Total Companies</h3>
+                    <p id="stat-companies">--</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Average CGPA</h3>
+                    <p id="stat-cgpa">--</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Dynamic Table View -->
+        <section id="table-view" class="view-section">
+            <div class="table-container">
+                <table id="data-table">
+                    <thead id="table-head"></thead>
+                    <tbody id="table-body"></tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <!-- Universal Add Modal -->
+    <div id="form-modal" class="modal">
+        <div class="modal-content">
+            <h2 id="modal-title">Add Record</h2>
+            <form id="dynamic-form">
+                <div id="form-fields"></div>
+                <div class="modal-actions">
+                    <button type="button" id="close-modal" class="secondary-btn">Cancel</button>
+                    <button type="submit" class="primary-btn">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
